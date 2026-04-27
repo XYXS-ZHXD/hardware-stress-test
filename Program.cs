@@ -244,8 +244,13 @@ namespace HardwareStressTest
                         gpuPasses++;
                         time += 0.016f; // ~60fps
 
-                        // 执行 GPU 计算着色器
-                        device.For(textureSize, textureSize, new GpuStressShader(output, input, time));
+                        // 执行 GPU 计算着色器（ComputeSharp 3.x 无构造函数，使用字段初始化器）
+                        device.For(textureSize, textureSize, new GpuStressShader
+                        {
+                            output = output,
+                            input = input,
+                            time = time
+                        });
 
                         // 等待 GPU 完成
                         device.WaitIdle();
@@ -442,23 +447,22 @@ namespace HardwareStressTest
         }
     }
 
-    // ComputeSharp GPU 计算着色器 - 重负载数学运算
-    [AutoConstructor]
-    public readonly partial struct GpuStressShader : IComputeShader
+    // ComputeSharp GPU 计算着色器 - 重负载数学运算（ComputeSharp 3.x API）
+    public partial struct GpuStressShader : IComputeShader
     {
-        public readonly IReadWriteNormalizedTexture2D<float4> output;
-        public readonly IReadOnlyNormalizedTexture2D<float4> input;
-        public readonly float time;
+        public IReadWriteNormalizedTexture2D<float4> output;
+        public IReadOnlyNormalizedTexture2D<float4> input;
+        public float time;
 
-        public void Execute(ThreadIds ids)
+        public void Execute()
         {
-            int x = ids.X;
-            int y = ids.Y;
+            int x = ThreadIds.X;
+            int y = ThreadIds.Y;
             int width = output.Width;
             int height = output.Height;
 
             // 从输入纹理读取
-            float4 pixel = input[ids.XY];
+            float4 pixel = input[new Int2(x, y)];
 
             // ========== 重负载 GPU 计算 ==========
             // 执行大量浮点运算来压榨 GPU 计算单元
@@ -497,7 +501,7 @@ namespace HardwareStressTest
             }
 
             // 输出结果
-            output[ids.XY] = new float4(r, g, b, a);
+            output[new Int2(x, y)] = new float4(r, g, b, a);
         }
     }
 }
