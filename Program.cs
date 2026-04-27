@@ -125,7 +125,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
             Blob? shaderBlob = null;
             Blob? errorBlob = null;
             var hr = Compiler.Compile(hlsl, null, null, "CSMain", "cs_5_0", 
-                CompilerFlags.None, out shaderBlob, out errorBlob);
+                0, out shaderBlob, out errorBlob);
 
             if (hr.Failure || shaderBlob == null)
             {
@@ -206,13 +206,13 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
 
         static ID3D11Buffer MakeBuffer(ID3D11Device device, float[] data, int byteSize, int stride)
         {
-            var desc = new BufferDescription(byteSize, BindFlags.UnorderedAccess,
+            var desc = new BufferDescription((uint)byteSize, BindFlags.UnorderedAccess,
                 ResourceUsage.Default, CpuAccessFlags.None,
-                ResourceOptionFlags.BufferStructured, stride);
+                ResourceOptionFlags.BufferStructured, (uint)stride);
 
             var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
             try {
-                var subData = new SubresourceData(handle.AddrOfPinnedObject(), byteSize, 0);
+                var subData = new SubresourceData(handle.AddrOfPinnedObject(), (uint)byteSize, 0);
                 return device.CreateBuffer(desc, subData);
             }
             finally { handle.Free(); }
