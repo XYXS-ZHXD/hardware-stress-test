@@ -126,21 +126,23 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
             // 编译 - 使用 Vortice 标准 API
             try
             {
-                var compResult = Compiler.Compile(hlsl, "CSMain", "cs_5_0");
-                if (compResult == null || compResult.HasErrors)
+                var hr = Compiler.Compile(hlsl, null, null, "CSMain", "cs_5_0", 0, out Blob? shaderBlob, out Blob? errorBlob);
+                if (hr.Failure || shaderBlob == null)
                 {
-                    string msg = compResult?.Message ?? "未知错误";
-                    Console.WriteLine($"   ❌ 编译失败: {msg}");
-                    compResult?.Dispose();
+                    string err = errorBlob != null ? Marshal.PtrToStringAnsi(errorBlob.BufferPointer) ?? "unknown" : "unknown";
+                    Console.WriteLine($"   ❌ 编译失败: {err}");
+                    errorBlob?.Dispose();
                     ctx.Dispose(); device.Dispose();
                     Console.WriteLine("   回退到 CPU 模拟...\n");
                     await CpuSim(sec);
                     return;
                 }
 
-                byte[] shaderBytes = compResult.GetBytes();
+                byte[] shaderBytes = new byte[shaderBlob.BufferSize];
+                Marshal.Copy(shaderBlob.BufferPointer, shaderBytes, 0, shaderBytes.Length);
                 var shader = device.CreateComputeShader(shaderBytes);
-                compResult.Dispose();
+                shaderBlob.Dispose();
+                errorBlob?.Dispose();
                 Console.WriteLine("   ✅ 着色器编译成功\n");
 
                 // 创建 GPU 缓冲区
