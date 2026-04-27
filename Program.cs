@@ -10,7 +10,7 @@ namespace HardwareStressTest
         static async Task Main(string[] args)
         {
             Console.WriteLine("╔════════════════════════════════════════════════════════╗");
-            Console.WriteLine("║     电脑 DIY 硬件压力测试工具 v1.0 - 绿色版           ║");
+            Console.WriteLine("║     电脑 DIY 硬件压力测试工具 v1.1 - 绿色版           ║");
             Console.WriteLine("║     作者：相由心生 (XYXS-ZHXD)                        ║");
             Console.WriteLine("╚════════════════════════════════════════════════════════╝");
             Console.WriteLine();
@@ -62,7 +62,7 @@ namespace HardwareStressTest
             Console.WriteLine("测试类型:");
             Console.WriteLine("  cpu     - CPU 压力测试（多线程计算压力）");
             Console.WriteLine("  memory  - 内存压力测试（大内存分配与读写）");
-            Console.WriteLine("  gpu     - GPU 压力测试（OpenCL 计算压力）");
+            Console.WriteLine("  gpu     - GPU 压力测试（矩阵运算压力）");
             Console.WriteLine("  all     - 全部测试（依次执行）");
             Console.WriteLine();
             Console.WriteLine("参数说明:");
@@ -140,6 +140,9 @@ namespace HardwareStressTest
             int chunkSize = 1024 * 1024 * 100; // 100MB 每块
             int chunkCount = (int)(allocateSize / chunkSize);
 
+            // 限制最少 1 块，最多 100 块
+            chunkCount = Math.Max(1, Math.Min(chunkCount, 100));
+
             Console.WriteLine($"   系统总内存：{totalMemory / 1024 / 1024 / 1024} GB");
             Console.WriteLine($"   计划分配：{chunkCount} 块 × 100MB = {chunkCount * 100} MB");
             Console.WriteLine();
@@ -147,64 +150,86 @@ namespace HardwareStressTest
             var chunks = new List<byte[]>();
             var cts = new CancellationTokenSource();
             int pass = 0;
+            bool testCompleted = false;
 
             try
             {
-                while (!cts.Token.IsCancellationRequested)
+                var testTask = Task.Run(() =>
                 {
-                    pass++;
-                    Console.WriteLine($"   第 {pass} 轮内存分配与读写测试...");
-
-                    // 分配内存
-                    for (int i = 0; i < chunkCount && !cts.Token.IsCancellationRequested; i++)
+                    while (!cts.Token.IsCancellationRequested && !testCompleted)
                     {
-                        var chunk = new byte[chunkSize];
-                        
-                        // 写入数据
-                        for (int j = 0; j < chunkSize; j += 4096)
-                        {
-                            chunk[j] = (byte)(j % 256);
-                        }
-                        
-                        chunks.Add(chunk);
-                        Console.Write("A");
-                    }
+                        pass++;
+                        Console.WriteLine($"\n   === 第 {pass} 轮内存分配与读写测试 ===");
 
-                    Console.WriteLine($"\n   已分配 {chunks.Count * 100} MB 内存");
-
-                    // 读取验证
-                    Console.WriteLine("   正在读取验证...");
-                    long readCount = 0;
-                    foreach (var chunk in chunks)
-                    {
-                        for (int j = 0; j < chunkSize; j += 4096)
+                        // 分配内存
+                        for (int i = 0; i < chunkCount && !cts.Token.IsCancellationRequested; i++)
                         {
-                            byte expected = (byte)(j % 256);
-                            if (chunk[j] != expected)
+                            var chunk = new byte[chunkSize];
+                            
+                            // 写入数据
+                            for (int j = 0; j < chunkSize; j += 4096)
                             {
-                                Console.WriteLine($"\n❌ 内存错误！地址偏移：{j}");
+                                chunk[j] = (byte)(j % 256);
                             }
-                            readCount++;
+                            
+                            chunks.Add(chunk);
+                            Console.Write("A");
                         }
-                        Console.Write("R");
+
+                        if (cts.Token.IsCancellationRequested) break;
+
+                        Console.WriteLine($"\n   已分配 {chunks.Count * 100} MB 内存");
+
+                        // 读取验证
+                        Console.WriteLine("   正在读取验证...");
+                        long readCount = 0;
+                        foreach (var chunk in chunks)
+                        {
+                            for (int j = 0; j < chunkSize; j += 4096)
+                            {
+                                byte expected = (byte)(j % 256);
+                                if (chunk[j] != expected)
+                                {
+                                    Console.WriteLine($"\n❌ 内存错误！地址偏移：{j}");
+                                }
+                                readCount++;
+                            }
+                            Console.Write("R");
+                        }
+                        Console.WriteLine($"\n   读取验证 {readCount} 个内存块");
+
+                        // 释放内存
+                        chunks.Clear();
+                        GC.Collect();
+                        Console.WriteLine("   内存已释放，准备下一轮...");
                     }
-                    Console.WriteLine($"\n   读取验证 {readCount} 个内存块");
+                    
+                    testCompleted = true;
+                });
 
-                    // 释放内存
-                    chunks.Clear();
-                    GC.Collect();
-                    Console.WriteLine("   内存已释放，准备下一轮...\n");
-
-                    await Task.Delay(1000, cts.Token);
-                }
+                // 等待指定时间后取消
+                await Task.Delay(durationSeconds * 1000);
+                cts.Cancel();
+                
+                // 等待任务完成
+                await testTask;
             }
             catch (OperationCanceledException)
             {
-                // 正常取消
+                // 正常取消，忽略
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n❌ 内存测试错误：{ex.Message}");
+                throw;
             }
             finally
             {
-                chunks.Clear();
+                // 确保释放内存
+                if (chunks != null)
+                {
+                    chunks.Clear();
+                }
                 GC.Collect();
             }
 
@@ -216,39 +241,44 @@ namespace HardwareStressTest
             Console.WriteLine($"\n🔥 开始 GPU 压力测试");
             Console.WriteLine($"   持续时间：{durationSeconds}秒");
             Console.WriteLine();
+            Console.WriteLine("⚠️  说明：本工具使用 CPU 模拟 GPU 矩阵运算负载");
+            Console.WriteLine("   对于核显（如 HD630），建议同时运行 GPU 测试 + 实际 3D 应用");
+            Console.WriteLine("   如：FurMark、Unigine Heaven 等专用 GPU 压力工具");
+            Console.WriteLine();
 
-            // 简化的 GPU 测试（使用 CPU 模拟 GPU 计算负载）
-            // 实际生产环境应使用 OpenCL 或 DirectX Compute Shader
             var cts = new CancellationTokenSource();
             long iterations = 0;
+            bool testCompleted = false;
 
             var gpuTask = Task.Run(() =>
             {
                 var random = new Random();
-                while (!cts.Token.IsCancellationRequested)
+                const int matrixSize = 1024; // 增大矩阵尺寸到 1024x1024
+                
+                while (!cts.Token.IsCancellationRequested && !testCompleted)
                 {
-                    // 模拟 GPU 矩阵运算
-                    float[,] matrix1 = new float[512, 512];
-                    float[,] matrix2 = new float[512, 512];
-                    float[,] result = new float[512, 512];
+                    // 大规模矩阵运算（模拟 GPU 计算负载）
+                    float[,] matrix1 = new float[matrixSize, matrixSize];
+                    float[,] matrix2 = new float[matrixSize, matrixSize];
+                    float[,] result = new float[matrixSize, matrixSize];
 
-                    // 初始化矩阵
-                    for (int i = 0; i < 512; i++)
+                    // 初始化矩阵（使用固定值，减少 Random 开销）
+                    for (int i = 0; i < matrixSize; i++)
                     {
-                        for (int j = 0; j < 512; j++)
+                        for (int j = 0; j < matrixSize; j++)
                         {
-                            matrix1[i, j] = (float)random.NextDouble();
-                            matrix2[i, j] = (float)random.NextDouble();
+                            matrix1[i, j] = (float)(i * j % 100) / 100.0f;
+                            matrix2[i, j] = (float)((i + j) % 100) / 100.0f;
                         }
                     }
 
-                    // 矩阵乘法（模拟 GPU 计算）
-                    for (int i = 0; i < 512; i++)
+                    // 矩阵乘法（密集计算，模拟 GPU 负载）
+                    for (int i = 0; i < matrixSize; i++)
                     {
-                        for (int j = 0; j < 512; j++)
+                        for (int j = 0; j < matrixSize; j++)
                         {
                             float sum = 0;
-                            for (int k = 0; k < 512; k++)
+                            for (int k = 0; k < matrixSize; k++)
                             {
                                 sum += matrix1[i, k] * matrix2[k, j];
                             }
@@ -257,11 +287,20 @@ namespace HardwareStressTest
                     }
 
                     iterations++;
-                    Console.Write("G");
+                    Console.Write($"G");
+                    
+                    // 每 10 次迭代报告一次
+                    if (iterations % 10 == 0)
+                    {
+                        Console.Write($"[{iterations}] ");
+                    }
                 }
+                
+                testCompleted = true;
             });
 
-            await Task.Delay(durationSeconds * 1000, cts.Token);
+            // 等待指定时间后取消
+            await Task.Delay(durationSeconds * 1000);
             cts.Cancel();
 
             try
@@ -270,10 +309,15 @@ namespace HardwareStressTest
             }
             catch (OperationCanceledException)
             {
-                // 正常取消
+                // 正常取消，忽略
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n❌ GPU 测试错误：{ex.Message}");
+                throw;
             }
 
-            Console.WriteLine($"\n✅ GPU 压力测试完成！持续时间：{durationSeconds}秒，执行 {iterations} 轮矩阵运算");
+            Console.WriteLine($"\n✅ GPU 压力测试完成！持续时间：{durationSeconds}秒，执行 {iterations} 轮矩阵运算 ({matrixSize}x{matrixSize})");
         }
 
         static async Task RunAllTests(int durationSeconds, int threadCount)
