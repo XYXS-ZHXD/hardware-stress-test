@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -43,7 +42,7 @@ namespace HardwareStressTest
             Console.WriteLine("用法: HardwareStressTest.exe <类型> [秒数] [线程数]");
             Console.WriteLine("  cpu     - CPU 压力测试");
             Console.WriteLine("  memory  - 内存压力测试");
-            Console.WriteLine("  gpu     - GPU 压力测试 (DirectX 11)");
+            Console.WriteLine("  gpu     - GPU 压力测试 (DirectX 11 Compute)");
             Console.WriteLine("  all     - 全部测试");
         }
 
@@ -87,8 +86,9 @@ namespace HardwareStressTest
         static async Task RunGpu(int sec)
         {
             Console.WriteLine($"\n🔥 GPU 压力测试 {sec}秒\n");
-
             Console.WriteLine("   📋 初始化 DirectX 11...");
+
+            // 创建 D3D11 设备
             var result = D3D11.D3D11CreateDevice(
                 null, DriverType.Hardware, DeviceCreationFlags.None,
                 new[] { FeatureLevel.Level_11_0 }, out ID3D11Device? device);
@@ -105,7 +105,7 @@ namespace HardwareStressTest
             string gpuName = GetGpuName(device);
             Console.WriteLine($"   🖥️  GPU: {gpuName}\n");
 
-            // 编译计算着色器
+            // HLSL 计算着色器 - 矩阵运算
             string hlsl = @"
 RWStructuredBuffer<float> A : register(u0);
 RWStructuredBuffer<float> B : register(u1);
@@ -122,93 +122,93 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
     C[idx] = sum;
 }";
             Console.WriteLine("   🔧 编译计算着色器...");
-            Blob? shaderBlob = null;
-            Blob? errorBlob = null;
-            var hr = Compiler.Compile(hlsl, "CSMain", "cs_5_0"
-                0, out shaderBlob, out errorBlob);
 
-            if (hr.Failure || shaderBlob == null)
+            // 编译 - 使用 Vortice 标准 API
+            try
             {
-                string err = errorBlob != null ? 
-                    Marshal.PtrToStringAnsi(errorBlob.BufferPointer) ?? "unknown" : "unknown";
-                Console.WriteLine($"   ❌ 编译失败: {err}");
-                errorBlob?.Dispose();
-                ctx.Dispose(); device.Dispose();
-                Console.WriteLine("   回退到 CPU 模拟...\n");
-                await CpuSim(sec);
-                return;
-            }
-            errorBlob?.Dispose();
-
-            // Blob → byte[] 辅助
-            byte[] GetBlobBytes(Blob b) {
-                byte[] bytes = new byte[b.BufferSize];
-                Marshal.Copy(b.BufferPointer, bytes, 0, bytes.Length);
-                return bytes;
-            }
-
-            var shader = device.CreateComputeShader(GetBlobBytes(shaderBlob));
-            shaderBlob.Dispose();
-            Console.WriteLine("   ✅ 着色器编译成功\n");
-
-            // 创建缓冲区 (128 * 512 = 65536 floats)
-            int totalElements = 128 * 512;
-            int stride = sizeof(float);
-            int byteSize = totalElements * stride;
-
-            float[] dataA = new float[totalElements];
-            float[] dataB = new float[totalElements];
-            float[] dataC = new float[totalElements];
-            var rnd = new Random(42);
-            for (int i = 0; i < totalElements; i++) { dataA[i] = (float)rnd.NextDouble(); dataB[i] = (float)rnd.NextDouble(); }
-
-            var bufA = MakeBuffer(device, dataA, byteSize, stride);
-            var bufB = MakeBuffer(device, dataB, byteSize, stride);
-            var bufC = MakeBuffer(device, dataC, byteSize, stride);
-
-            var uavA = device.CreateUnorderedAccessView(bufA);
-            var uavB = device.CreateUnorderedAccessView(bufB);
-            var uavC = device.CreateUnorderedAccessView(bufC);
-
-            ctx.CSSetShader(shader);
-            ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { uavA, uavB, uavC });
-
-            Console.WriteLine("   🚀 GPU 计算压力测试中...（任务管理器→GPU 查看使用率）\n");
-
-            var cts = new CancellationTokenSource();
-            long dispatches = 0;
-
-            var gpuTask = Task.Run(() => {
-                while (!cts.Token.IsCancellationRequested) {
-                    dispatches++;
-                    ctx.Dispatch(1024, 1, 1);
-                    ctx.Flush();
-                    if (dispatches % 10 == 0) Console.Write($"D[{dispatches}] ");
-                    else Console.Write(".");
+                var compResult = Compiler.Compile(hlsl, "CSMain", "cs_5_0");
+                if (compResult == null || compResult.HasErrors)
+                {
+                    string msg = compResult?.Message ?? "未知错误";
+                    Console.WriteLine($"   ❌ 编译失败: {msg}");
+                    compResult?.Dispose();
+                    ctx.Dispose(); device.Dispose();
+                    Console.WriteLine("   回退到 CPU 模拟...\n");
+                    await CpuSim(sec);
+                    return;
                 }
-            });
 
-            await Task.Delay(sec * 1000);
-            cts.Cancel();
-            try { await gpuTask; } catch { }
+                byte[] shaderBytes = compResult.GetBytes();
+                var shader = device.CreateComputeShader(shaderBytes);
+                compResult.Dispose();
+                Console.WriteLine("   ✅ 着色器编译成功\n");
 
-            shader.Dispose();
-            uavA.Dispose(); uavB.Dispose(); uavC.Dispose();
-            bufA.Dispose(); bufB.Dispose(); bufC.Dispose();
-            ctx.Dispose(); device.Dispose();
+                // 创建 GPU 缓冲区
+                int totalElems = 128 * 512;
+                int byteSize = totalElems * 4;
 
-            long totalOps = dispatches * 1024L * 64L * 128L * 4L;
-            Console.WriteLine($"\n\n✅ GPU (DirectX 11 Compute) 完成！");
-            Console.WriteLine($"   GPU: {gpuName}");
-            Console.WriteLine($"   Dispatch: {dispatches} 次");
-            Console.WriteLine($"   运算量: ~{totalOps:N0} FLOPs");
+                float[] dataA = new float[totalElems];
+                float[] dataB = new float[totalElems];
+                float[] dataC = new float[totalElems];
+                var rnd = new Random(42);
+                for (int i = 0; i < totalElems; i++) { dataA[i] = (float)rnd.NextDouble(); dataB[i] = (float)rnd.NextDouble(); }
+
+                var bufA = MakeBuf(device, dataA, byteSize);
+                var bufB = MakeBuf(device, dataB, byteSize);
+                var bufC = MakeBuf(device, dataC, byteSize);
+
+                var uavA = device.CreateUnorderedAccessView(bufA);
+                var uavB = device.CreateUnorderedAccessView(bufB);
+                var uavC = device.CreateUnorderedAccessView(bufC);
+
+                ctx.CSSetShader(shader);
+                ctx.CSSetUnorderedAccessViews(0, new ID3D11UnorderedAccessView[] { uavA, uavB, uavC });
+
+                Console.WriteLine("   🚀 GPU 计算压力测试中...\n");
+                Console.WriteLine("   (任务管理器 → 性能 → GPU 查看使用率)\n");
+
+                var cts = new CancellationTokenSource();
+                long dispatches = 0;
+
+                var gpuTask = Task.Run(() => {
+                    while (!cts.Token.IsCancellationRequested) {
+                        dispatches++;
+                        ctx.Dispatch(1024, 1, 1);
+                        ctx.Flush();
+                        if (dispatches % 10 == 0) Console.Write($"D[{dispatches}] ");
+                        else Console.Write(".");
+                    }
+                });
+
+                await Task.Delay(sec * 1000);
+                cts.Cancel();
+                try { await gpuTask; } catch { }
+
+                shader.Dispose();
+                uavA.Dispose(); uavB.Dispose(); uavC.Dispose();
+                bufA.Dispose(); bufB.Dispose(); bufC.Dispose();
+                ctx.Dispose(); device.Dispose();
+
+                long totalOps = dispatches * 1024L * 64L * 128L * 4L;
+                Console.WriteLine($"\n\n✅ GPU (DirectX 11 Compute) 完成！");
+                Console.WriteLine($"   GPU: {gpuName}");
+                Console.WriteLine($"   Dispatch: {dispatches} 次");
+                Console.WriteLine($"   运算量: ~{totalOps:N0} FLOPs");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   ❌ 编译错误: {ex.Message}");
+                Console.WriteLine("   回退到 CPU 模拟...\n");
+                ctx.Dispose(); device.Dispose();
+                await CpuSim(sec);
+            }
         }
 
-        static ID3D11Buffer MakeBuffer(ID3D11Device device, float[] data, int byteSize, int stride)
+        static ID3D11Buffer MakeBuf(ID3D11Device device, float[] data, int byteSize)
         {
             var desc = new BufferDescription((uint)byteSize, BindFlags.UnorderedAccess,
                 ResourceUsage.Default, CpuAccessFlags.None,
-                ResourceOptionFlags.BufferStructured, (uint)stride);
+                ResourceOptionFlags.BufferStructured, 4);
 
             var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
             try {
