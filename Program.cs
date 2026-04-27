@@ -249,11 +249,11 @@ namespace HardwareStressTest
             var cts = new CancellationTokenSource();
             long iterations = 0;
             bool testCompleted = false;
+            const int matrixSize = 1024; // 增大矩阵尺寸到 1024x1024
 
             var gpuTask = Task.Run(() =>
             {
                 var random = new Random();
-                const int matrixSize = 1024; // 增大矩阵尺寸到 1024x1024
                 
                 while (!cts.Token.IsCancellationRequested && !testCompleted)
                 {
