@@ -15,10 +15,12 @@
     <Version>1.3.0</Version>
     <Authors>相由心生</Authors>
     <Description>电脑 DIY 硬件压力测试工具 - 绿色免安装版</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ComputeSharp" Version="3.2.0" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
   </ItemGroup>
 
 </Project>

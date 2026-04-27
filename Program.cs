@@ -1,10 +1,12 @@
 using System;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using ComputeSharp;
+using Vortice.Direct3D;
+using Vortice.Direct3D11;
+using Vortice.D3DCompiler;
+using Vortice.DXGI;
+using Vortice.Mathematics;
 
 namespace HardwareStressTest
 {
@@ -14,254 +16,196 @@ namespace HardwareStressTest
         {
             Console.WriteLine("╔════════════════════════════════════════════════════════╗");
             Console.WriteLine("║     电脑 DIY 硬件压力测试工具 v1.3 - 绿色版           ║");
-            Console.WriteLine("║     作者：相由心生 (XYXS-ZHXD)                        ║");
+            Console.WriteLine("║     引擎：DirectX 11 Compute Shader                   ║");
             Console.WriteLine("╚════════════════════════════════════════════════════════╝");
             Console.WriteLine();
 
-            if (args.Length == 0)
-            {
-                ShowHelp();
-                return;
-            }
+            if (args.Length == 0) { ShowHelp(); return; }
 
-            string testType = args[0].ToLower();
-            int duration = args.Length > 1 ? int.Parse(args[1]) : 60;
+            string type = args[0].ToLower();
+            int dur = args.Length > 1 ? int.Parse(args[1]) : 60;
             int threads = args.Length > 2 ? int.Parse(args[2]) : Environment.ProcessorCount;
 
             try
             {
-                switch (testType)
+                switch (type)
                 {
-                    case "cpu":
-                        await RunCpuTest(duration, threads);
-                        break;
-                    case "memory":
-                    case "mem":
-                        await RunMemoryTest(duration);
-                        break;
-                    case "gpu":
-                        await RunGpuTest(duration);
-                        break;
-                    case "all":
-                        await RunAllTests(duration, threads);
-                        break;
-                    default:
-                        ShowHelp();
-                        break;
+                    case "cpu": await RunCpu(dur, threads); break;
+                    case "mem": case "memory": await RunMem(dur); break;
+                    case "gpu": await RunGpu(dur); break;
+                    case "all": await RunAll(dur, threads); break;
+                    default: ShowHelp(); break;
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"\n❌ 测试过程中发生错误：{ex.Message}");
-                Console.WriteLine($"详细信息：{ex.StackTrace}");
-                Environment.Exit(1);
-            }
+            catch (Exception ex) { Console.WriteLine($"\n❌ 错误：{ex.Message}"); Environment.Exit(1); }
         }
 
         static void ShowHelp()
         {
-            Console.WriteLine("使用方法:");
-            Console.WriteLine("  HardwareStressTest.exe <测试类型> [持续时间秒] [线程数]");
-            Console.WriteLine();
-            Console.WriteLine("测试类型:");
-            Console.WriteLine("  cpu     - CPU 压力测试（多线程计算压力）");
-            Console.WriteLine("  memory  - 内存压力测试（大内存分配与读写）");
-            Console.WriteLine("  gpu     - GPU 压力测试（DirectX 12 真实 GPU 计算）");
-            Console.WriteLine("  all     - 全部测试（依次执行）");
-            Console.WriteLine();
-            Console.WriteLine("参数说明:");
-            Console.WriteLine("  持续时间秒：测试持续时间，默认 60 秒");
-            Console.WriteLine("  线程数：CPU 测试线程数，默认为 CPU 核心数");
-            Console.WriteLine();
-            Console.WriteLine("示例:");
-            Console.WriteLine("  HardwareStressTest.exe cpu 120        # CPU 测试 2 分钟");
-            Console.WriteLine("  HardwareStressTest.exe memory 300     # 内存测试 5 分钟");
-            Console.WriteLine("  HardwareStressTest.exe gpu 60         # GPU 测试 1 分钟");
-            Console.WriteLine("  HardwareStressTest.exe all 300        # 全部测试 5 分钟");
+            Console.WriteLine("用法: HardwareStressTest.exe <类型> [秒数] [线程数]");
+            Console.WriteLine("  cpu     - CPU 压力测试");
+            Console.WriteLine("  memory  - 内存压力测试");
+            Console.WriteLine("  gpu     - GPU 压力测试 (DirectX 11)");
+            Console.WriteLine("  all     - 全部测试");
+            Console.WriteLine("示例:  HardwareStressTest.exe gpu 120");
         }
 
-        // ==================== CPU 压力测试 ====================
-        static async Task RunCpuTest(int durationSeconds, int threadCount)
+        // ===== CPU =====
+        static async Task RunCpu(int sec, int thr)
         {
-            Console.WriteLine($"\n🔥 开始 CPU 压力测试");
-            Console.WriteLine($"   持续时间：{durationSeconds}秒");
-            Console.WriteLine($"   线程数：{threadCount}");
-            Console.WriteLine();
-
+            Console.WriteLine($"\n🔥 CPU 压力测试 {sec}秒 {thr}线程\n");
             var cts = new CancellationTokenSource();
-            var tasks = new List<Task>();
-
-            for (int i = 0; i < threadCount; i++)
-                tasks.Add(Task.Run(() => CpuStressWorker(cts.Token)));
-
-            Console.WriteLine("✅ 所有线程已启动，开始压力测试...\n");
-
-            await Task.Delay(durationSeconds * 1000);
-            cts.Cancel();
+            var tasks = new Task[thr];
+            for (int i = 0; i < thr; i++)
+                tasks[i] = Task.Run(() => { double r = 0; var rnd = new Random();
+                    while (!cts.Token.IsCancellationRequested)
+                        for (int j = 0; j < 100000; j++)
+                            r += Math.Sin(rnd.NextDouble()) * Math.Cos(rnd.NextDouble());
+                        if (r < 0) Console.Write("."); });
+            await Task.Delay(sec * 1000); cts.Cancel();
             await Task.WhenAll(tasks);
-            Console.WriteLine($"\n✅ CPU 压力测试完成！持续时间：{durationSeconds}秒");
+            Console.WriteLine("\n✅ CPU 测试完成");
         }
 
-        static void CpuStressWorker(CancellationToken token)
+        // ===== 内存 =====
+        static async Task RunMem(int sec)
         {
-            double result = 0;
-            long iterations = 0;
-            var random = new Random();
-
-            while (!token.IsCancellationRequested)
-            {
-                for (int i = 0; i < 10000; i++)
-                    result += Math.Sin(random.NextDouble()) * Math.Cos(random.NextDouble()) +
-                              Math.Sqrt(Math.Abs(result) + 1);
-                iterations += 10000;
-                if (iterations % 100000 == 0) Console.Write(".");
-            }
-            Console.WriteLine($"\n   线程完成，执行计算次数：{iterations}");
-        }
-
-        // ==================== 内存压力测试 ====================
-        static async Task RunMemoryTest(int durationSeconds)
-        {
-            Console.WriteLine($"\n🔥 开始内存压力测试（持续时间：{durationSeconds}秒）\n");
-
-            long totalMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
-            long allocateSize = (long)(totalMemory * 0.75);
-            int chunkSize = 100 * 1024 * 1024;
-            int chunkCount = Math.Max(1, Math.Min((int)(allocateSize / chunkSize), 100));
-
-            Console.WriteLine($"   系统总内存：{totalMemory / 1024 / 1024 / 1024} GB");
-            Console.WriteLine($"   计划分配：{chunkCount} 块 × 100MB = {chunkCount * 100} MB\n");
-
+            Console.WriteLine($"\n🔥 内存压力测试 {sec}秒\n");
+            long mem = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+            int n = Math.Max(1, Math.Min((int)(mem * 0.75 / (100L << 20)), 50));
+            Console.WriteLine($"   总内存 {mem >> 30} GB, 分配 {n}×100MB\n");
             var cts = new CancellationTokenSource();
             int pass = 0;
-
-            var testTask = Task.Run(() =>
-            {
-                while (!cts.Token.IsCancellationRequested)
-                {
-                    var chunks = new List<byte[]>();
-                    pass++;
-                    Console.WriteLine($"   === 第 {pass} 轮内存读写测试 ===");
-
-                    for (int i = 0; i < chunkCount && !cts.Token.IsCancellationRequested; i++)
-                    {
-                        var chunk = new byte[chunkSize];
-                        for (int j = 0; j < chunkSize; j += 4096)
-                            chunk[j] = (byte)(j % 256);
-                        chunks.Add(chunk);
-                        Console.Write("A");
-                    }
-                    Console.WriteLine($"\n   已分配 {chunks.Count * 100} MB");
-
-                    Console.Write("   读取验证中");
-                    foreach (var chunk in chunks)
-                    {
-                        for (int j = 0; j < chunkSize; j += 4096)
-                        {
-                            byte expected = (byte)(j % 256);
-                            if (chunk[j] != expected)
-                                Console.WriteLine($"\n❌ 内存错误！地址偏移：{j}");
-                        }
-                        Console.Write("R");
-                    }
-                    Console.WriteLine($"\n   验证完成，释放内存\n");
-                    chunks.Clear();
-                    GC.Collect();
-                }
+            var task = Task.Run(() => {
+                while (!cts.Token.IsCancellationRequested) {
+                    pass++; Console.Write($"   第{pass}轮...");
+                    var list = new List<byte[]>();
+                    for (int i = 0; i < n && !cts.Token.IsCancellationRequested; i++)
+                    { var b = new byte[100L << 20]; for (int j = 0; j < b.Length; j += 4096) b[j] = (byte)j; list.Add(b); }
+                    foreach (var b in list) for (int j = 0; j < b.Length; j += 4096) _ = b[j];
+                    list.Clear(); GC.Collect(); Console.Write("释放\n"); }
             });
-
-            await Task.Delay(durationSeconds * 1000);
-            cts.Cancel();
-            try { await testTask; } catch (OperationCanceledException) { }
-
-            Console.WriteLine($"\n✅ 内存压力测试完成！持续时间：{durationSeconds}秒，共 {pass} 轮");
+            await Task.Delay(sec * 1000); cts.Cancel();
+            try { await task; } catch { }
+            Console.WriteLine($"\n✅ 内存测试完成！{pass} 轮");
         }
 
-        // ==================== GPU 压力测试（ComputeSharp / DirectX 12） ====================
-        static async Task RunGpuTest(int durationSeconds)
+        // ===== GPU (DirectX 11 Compute Shader) =====
+        static async Task RunGpu(int sec)
         {
-            Console.WriteLine($"\n🔥 开始 GPU 压力测试");
-            Console.WriteLine($"   持续时间：{durationSeconds}秒");
-            Console.WriteLine($"   引擎：ComputeSharp (DirectX 12)\n");
+            Console.WriteLine($"\n🔥 GPU 压力测试 {sec}秒\n");
 
-            // 先尝试使用 ComputeSharp (DX12)
-            if (TryRunComputeSharpGpuTest(durationSeconds))
+            // 尝试 DirectX 11
+            if (RunD3D11Compute(sec))
                 return;
 
-            // 回退到 DirectX 11 检测
-            if (TryRunD3D11Fallback(durationSeconds))
-                return;
-
-            // 最后回退到 CPU 模拟
-            Console.WriteLine("\n⚠️  所有 GPU 加速方法均不可用，已回退到 CPU 模拟模式");
-            await RunEnhancedCpuSimulation(durationSeconds);
+            Console.WriteLine("❌ DirectX 11 不可用，回退到 CPU 模拟\n");
+            await CpuSim(sec);
         }
 
-        // ============ 方法1：ComputeSharp (DX12) - 主要方法 ============
-        static bool TryRunComputeSharpGpuTest(int durationSeconds)
+        static bool RunD3D11Compute(int sec)
         {
             try
             {
-                // 获取默认 GPU 设备
-                Console.WriteLine("   📋 正在检测 GPU 设备...");
+                // 1. 创建 D3D11 设备
+                Console.WriteLine("   📋 正在初始化 DirectX 11...");
                 
-                using var device = GraphicsDevice.GetDefault();
-                string gpuName = device.Name;
-                
-                Console.WriteLine($"   ✅ 已检测到 GPU：{gpuName}");
-                Console.WriteLine($"   ✅ 支持 DirectX 12，开始 GPU 计算压力测试...\n");
-
-                // 分配 GPU 计算资源 - 使用 1024x1024 纹理
-                const int textureSize = 1024;
-                var output = device.AllocateReadWriteTexture2D<float4>(textureSize, textureSize);
-                var input = device.AllocateReadWriteTexture2D<float4>(textureSize, textureSize);
-                
-                // 初始化输入数据
-                var initData = new float4[textureSize * textureSize];
-                var random = new Random();
-                for (int i = 0; i < initData.Length; i++)
+                var (device, context) = CreateD3D11Device();
+                if (device == null)
                 {
-                    initData[i] = new float4(
-                        (float)random.NextDouble(),
-                        (float)random.NextDouble(),
-                        (float)random.NextDouble(),
-                        1.0f
-                    );
+                    Console.WriteLine("   ❌ 无法创建 D3D11 设备，可能缺少显卡驱动");
+                    return false;
                 }
-                input.CopyFrom(initData);
-                float time = 0f;
 
+                string gpuName = GetAdapterName(device);
+                Console.WriteLine($"   ✅ D3D11 设备已创建");
+                Console.WriteLine($"   🖥️  GPU: {gpuName}");
+                Console.WriteLine();
+
+                // 2. HLSL 计算着色器源码
+                string hlsl = @"
+RWStructuredBuffer<float> A : register(u0);
+RWStructuredBuffer<float> B : register(u1);
+RWStructuredBuffer<float> C : register(u2);
+RWStructuredBuffer<float> D : register(u3);
+
+[numthreads(128, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID) {
+    uint i = id.x;
+    float sum = 0;
+    // 256 次浮点运算
+    [unroll]
+    for (int k = 0; k < 256; k++) {
+        float a = A[i * 256 + k];
+        float b = B[k * 256 + (i & 255)];
+        sum += sin(a) * cos(b) + sqrt(abs(a * b + 0.001f));
+        sum += tan(a * 0.5f + b * 0.3f) * sin(b * 0.7f + a * 0.5f);
+    }
+    C[i] = sum;
+    D[i] = frac(sum * 3.14159f);
+}";
+                // 3. 编译着色器
+                Console.WriteLine("   🔧 正在编译计算着色器...");
+                CompilerResult result = Compiler.Compile(hlsl, "CSMain", "cs_5_0");
+                if (result.HasErrors)
+                {
+                    Console.WriteLine($"   ❌ 着色器编译失败: {result.Message}");
+                    device.Dispose(); context.Dispose();
+                    return false;
+                }
+                Console.WriteLine("   ✅ 计算着色器编译成功！\n");
+
+                // 4. 创建计算着色器
+                ID3D11ComputeShader shader = device.CreateComputeShader(result.Buffer);
+                result.Dispose();
+
+                // 5. 创建 GPU 缓冲区 (256K 个 float)
+                int bufSize = 256 * 1024;
+                int stride = sizeof(float);
+                int byteSize = bufSize * stride;
+
+                float[] dataA = new float[bufSize];
+                float[] dataB = new float[bufSize];
+                var rnd = new Random(42);
+                for (int i = 0; i < bufSize; i++) { dataA[i] = (float)rnd.NextDouble(); dataB[i] = (float)rnd.NextDouble(); }
+
+                ID3D11Buffer bufferA = CreateBuffer(device, dataA, byteSize);
+                ID3D11Buffer bufferB = CreateBuffer(device, dataB, byteSize);
+                ID3D11Buffer bufferC = CreateBuffer(device, new float[bufSize], byteSize);
+                ID3D11Buffer bufferD = CreateBuffer(device, new float[bufSize], byteSize);
+
+                // 设置 UAV
+                ID3D11UnorderedAccessView uavA = device.CreateUnorderedAccessView(bufferA);
+                ID3D11UnorderedAccessView uavB = device.CreateUnorderedAccessView(bufferB);
+                ID3D11UnorderedAccessView uavC = device.CreateUnorderedAccessView(bufferC);
+                ID3D11UnorderedAccessView uavD = device.CreateUnorderedAccessView(bufferD);
+
+                context.CSSetShader(shader);
+                context.CSSetUnorderedAccessViews(0, uavA, uavB, uavC, uavD);
+
+                Console.WriteLine("   🚀 开始 GPU 计算压力测试...");
+                Console.WriteLine("   (任务管理器 → 性能 → GPU 应显示使用率上升)\n");
+
+                // 6. 计算循环
                 var cts = new CancellationTokenSource();
-                int gpuPasses = 0;
-                long totalOps = 0;
+                long dispatchCount = 0;
 
-                var testTask = Task.Run(() =>
+                var gpuTask = Task.Run(() =>
                 {
                     var sw = Stopwatch.StartNew();
-
                     while (!cts.Token.IsCancellationRequested)
                     {
-                        gpuPasses++;
-                        time += 0.016f; // ~60fps
+                        dispatchCount++;
 
-                        // 执行 GPU 计算着色器（ComputeSharp 3.x 无构造函数，使用字段初始化器）
-                        device.For(textureSize, textureSize, new GpuStressShader
-                        {
-                            output = output,
-                            input = input,
-                            time = time
-                        });
+                        // 每次 Dispatch 启动 2048 个线程组 × 128 线程 = 262,144 线程
+                        // 每个线程执行 ~512 次浮点运算
+                        context.Dispatch(2048, 1, 1);
 
                         // 等待 GPU 完成
-                        device.WaitIdle();
+                        context.Flush();
 
-                        // 统计运算量（每个像素执行约 50 次浮点运算）
-                        long opsPerPass = (long)textureSize * textureSize * 50;
-                        totalOps += opsPerPass;
-
-                        // 进度显示
-                        if (gpuPasses % 10 == 0)
-                            Console.Write($"GPU[{gpuPasses}] ");
+                        if (dispatchCount % 10 == 0)
+                            Console.Write($"D[{dispatchCount}] ");
                         else
                             Console.Write(".");
                     }
@@ -269,239 +213,102 @@ namespace HardwareStressTest
                 });
 
                 // 等待指定时间
-                Task.Delay(durationSeconds * 1000).Wait();
+                Task.Delay(sec * 1000).Wait();
                 cts.Cancel();
-                try { testTask.Wait(); }
-                catch (AggregateException) { }
-                catch (OperationCanceledException) { }
+                try { gpuTask.Wait(); } catch { }
 
-                // 释放 GPU 资源
-                output.Dispose();
-                input.Dispose();
+                // 7. 统计并清理
+                long totalOps = dispatchCount * 2048 * 128 * 512;
+                shader.Dispose();
+                uavA.Dispose(); uavB.Dispose(); uavC.Dispose(); uavD.Dispose();
+                bufferA.Dispose(); bufferB.Dispose(); bufferC.Dispose(); bufferD.Dispose();
+                context.Dispose(); device.Dispose();
 
-                Console.WriteLine($"\n\n✅ GPU 压力测试（DirectX 12）完成！");
-                Console.WriteLine($"   持续时间：{durationSeconds}秒");
-                Console.WriteLine($"   GPU 型号：{gpuName}");
-                Console.WriteLine($"   着色器执行次数：{gpuPasses} 次");
-                Console.WriteLine($"   总浮点运算量：{totalOps:N0} FLOPs");
-                Console.WriteLine($"   运算密度：{totalOps / Math.Max(durationSeconds, 1):N0} FLOPs/s");
+                Console.WriteLine($"\n\n✅ GPU 压力测试 (DirectX 11) 完成！");
+                Console.WriteLine($"   持续时间：{sec}秒");
+                Console.WriteLine($"   GPU: {gpuName}");
+                Console.WriteLine($"   Dispatch 次数：{dispatchCount}");
+                Console.WriteLine($"   总 GPU 浮点运算：约 {totalOps:N0} FLOPs");
                 Console.WriteLine($"   💡 请打开任务管理器查看 GPU 使用率");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"   ❌ DirectX 12 不可用：{ex.Message}");
-                Console.WriteLine($"   ℹ️  详细信息：{ex.GetType().Name}");
+                Console.WriteLine($"   ❌ GPU 测试失败：{ex.Message}");
                 return false;
             }
         }
 
-        // ============ 方法2：DirectX 11 回退 ============
-        static bool TryRunD3D11Fallback(int durationSeconds)
+        // 创建 D3D11 设备
+        static (ID3D11Device?, ID3D11DeviceContext?) CreateD3D11Device()
         {
             try
             {
-                Console.WriteLine("   📋 正在尝试 DirectX 11 检测...");
+                var result = D3D11.D3D11CreateDevice(
+                    null, DriverType.Hardware, DeviceCreationFlags.None,
+                    new[] { FeatureLevel.Level_11_0, FeatureLevel.Level_10_1, FeatureLevel.Level_10_0 },
+                    out ID3D11Device? device);
                 
-                // 检查 d3d11.dll 是否存在
-                if (!File.Exists(Path.Combine(Environment.SystemDirectory, "d3d11.dll")))
-                {
-                    Console.WriteLine("   ❌ d3d11.dll 不存在");
-                    return false;
-                }
+                if (result.Failure || device == null)
+                    return (null, null);
 
-                Console.WriteLine("   ✅ DirectX 11 可用，使用 CPU 模拟 GPU 计算负载\n");
-
-                // 使用 CPU 执行密集矩阵运算来模拟 GPU 负载模式
-                // 同时创建 GPU 可观察的负载（通过持续的内存读写和计算）
-                var cts = new CancellationTokenSource();
-                long iterations = 0;
-                const int matrixSize = 2048;
-
-                var simTask = Task.Run(() =>
-                {
-                    while (!cts.Token.IsCancellationRequested)
-                    {
-                        float[,] m1 = new float[matrixSize, matrixSize];
-                        float[,] m2 = new float[matrixSize, matrixSize];
-                        float[,] r = new float[matrixSize, matrixSize];
-
-                        // 初始化
-                        for (int i = 0; i < matrixSize; i++)
-                            for (int j = 0; j < matrixSize; j++)
-                            {
-                                m1[i, j] = (float)(i * j % 1000) / 1000f;
-                                m2[i, j] = (float)((i + j) % 1000) / 1000f;
-                            }
-
-                        // 矩阵乘法
-                        for (int i = 0; i < matrixSize; i++)
-                            for (int j = 0; j < matrixSize; j++)
-                            {
-                                float sum = 0;
-                                for (int k = 0; k < matrixSize; k++)
-                                    sum += m1[i, k] * m2[k, j];
-                                r[i, j] = sum;
-                            }
-
-                        iterations++;
-                        if (iterations % 3 == 0)
-                            Console.Write($"M[{matrixSize}] ");
-                        else
-                            Console.Write(".");
-                    }
-                });
-
-                Task.Delay(durationSeconds * 1000).Wait();
-                cts.Cancel();
-                try { simTask.Wait(); }
-                catch (OperationCanceledException) { }
-                catch (AggregateException) { }
-
-                long totalFlops = iterations * 2L * matrixSize * matrixSize * matrixSize;
-                Console.WriteLine($"\n✅ GPU 压力测试（DirectX 11 模拟模式）完成！");
-                Console.WriteLine($"   持续时间：{durationSeconds}秒");
-                Console.WriteLine($"   执行 {iterations} 轮 {matrixSize}x{matrixSize} 矩阵乘法");
-                Console.WriteLine($"   总浮点运算量：{totalFlops:N0} FLOPs");
-                Console.WriteLine($"   ⚠️  建议安装 GPU 驱动以启用 DirectX 12 加速");
-                return true;
+                var context = device.ImmediateContext;
+                return (device, context);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"   ❌ DirectX 11 检测失败：{ex.Message}");
-                return false;
+                return (null, null);
             }
         }
 
-        // ============ 方法3：CPU 模拟（最后防线） ============
-        static async Task RunEnhancedCpuSimulation(int durationSeconds)
+        // 获取 GPU 名称
+        static string GetAdapterName(ID3D11Device device)
         {
-            Console.WriteLine("\n   💡 建议：请安装最新的显卡驱动");
-            Console.WriteLine("   - Intel：https://www.intel.com/drivers");
-            Console.WriteLine("   - NVIDIA：https://www.nvidia.com/drivers");
-            Console.WriteLine("   - AMD：https://www.amd.com/support\n");
-
-            const int matrixSize = 2048;
-            var cts = new CancellationTokenSource();
-            long iterations = 0;
-
-            var simTask = Task.Run(() =>
+            try
             {
+                using var dxgiDevice = device.QueryInterface<IDXGIDevice>();
+                using var adapter = dxgiDevice.GetAdapter();
+                return adapter.Description.Description;
+            }
+            catch { return "未知"; }
+        }
+
+        // 创建 GPU StructuredBuffer
+        static ID3D11Buffer CreateBuffer(ID3D11Device device, float[] data, int byteSize)
+        {
+            return device.CreateBuffer(new BufferDescription(byteSize, BindFlags.UnorderedAccess,
+                ResourceUsage.Default, CpuAccessFlags.None, ResourceOptionFlags.BufferStructured,
+                sizeof(float)), new SubresourceData(data));
+        }
+
+        // CPU 模拟回退
+        static async Task CpuSim(int sec)
+        {
+            const int s = 2048;
+            var cts = new CancellationTokenSource();
+            long it = 0;
+            var t = Task.Run(() => {
                 while (!cts.Token.IsCancellationRequested)
                 {
-                    float[,] m1 = new float[matrixSize, matrixSize];
-                    float[,] m2 = new float[matrixSize, matrixSize];
-                    float[,] r = new float[matrixSize, matrixSize];
-
-                    for (int i = 0; i < matrixSize; i++)
-                        for (int j = 0; j < matrixSize; j++)
-                        {
-                            m1[i, j] = (float)(i * j % 1000) / 1000f;
-                            m2[i, j] = (float)((i + j) % 1000) / 1000f;
-                        }
-
-                    for (int i = 0; i < matrixSize; i++)
-                        for (int j = 0; j < matrixSize; j++)
-                        {
-                            float sum = 0;
-                            for (int k = 0; k < matrixSize; k++)
-                                sum += m1[i, k] * m2[k, j];
-                            r[i, j] = sum;
-                        }
-
-                    iterations++;
-                    if (iterations % 3 == 0)
-                        Console.Write($"S[{matrixSize}x{matrixSize}] ");
-                    else
-                        Console.Write(".");
+                    var m1 = new float[s, s]; var m2 = new float[s, s]; var r = new float[s, s];
+                    for (int i = 0; i < s; i++) for (int j = 0; j < s; j++) { m1[i, j] = (float)(i * j % 1000) / 1000f; m2[i, j] = (float)((i + j) % 1000) / 1000f; }
+                    for (int i = 0; i < s; i++) for (int j = 0; j < s; j++) { float sum = 0; for (int k = 0; k < s; k++) sum += m1[i, k] * m2[k, j]; r[i, j] = sum; }
+                    it++; if (it % 3 == 0) Console.Write($"S[{s}] "); else Console.Write(".");
                 }
             });
-
-            await Task.Delay(durationSeconds * 1000);
-            cts.Cancel();
-            try { await simTask; }
-            catch (OperationCanceledException) { }
-            catch (AggregateException) { }
-
-            long totalFlops = iterations * 2L * matrixSize * matrixSize * matrixSize;
-            Console.WriteLine($"\n✅ GPU 压力测试（CPU 模拟）完成！持续时间：{durationSeconds}秒，{iterations} 轮");
-            Console.WriteLine($"   浮点运算量：{totalFlops / 1000000000:N2} GFLOPs");
+            await Task.Delay(sec * 1000); cts.Cancel();
+            try { await t; } catch { }
+            Console.WriteLine($"\n✅ CPU 模拟完成！{it} 轮 {s}x{s}");
         }
 
-        // ==================== 综合测试 ====================
-        static async Task RunAllTests(int durationSeconds, int threadCount)
+        // ===== 综合 =====
+        static async Task RunAll(int sec, int thr)
         {
-            int single = durationSeconds / 3;
-            Console.WriteLine($"\n🔥 开始综合压力测试（CPU + 内存 + GPU），每项 {single} 秒\n");
-
-            await RunCpuTest(single, threadCount);
-            Console.WriteLine("\n--- 间隔 2 秒 ---\n");
-            await Task.Delay(2000);
-
-            await RunMemoryTest(single);
-            Console.WriteLine("\n--- 间隔 2 秒 ---\n");
-            await Task.Delay(2000);
-
-            await RunGpuTest(single);
-            Console.WriteLine("\n✅ 全部压力测试完成！");
-        }
-    }
-
-    // ComputeSharp GPU 计算着色器 - 重负载数学运算（ComputeSharp 3.x API）
-    public partial struct GpuStressShader : IComputeShader
-    {
-        public IReadWriteNormalizedTexture2D<float4> output;
-        public IReadOnlyNormalizedTexture2D<float4> input;
-        public float time;
-
-        public void Execute()
-        {
-            int x = ThreadIds.X;
-            int y = ThreadIds.Y;
-            int width = output.Width;
-            int height = output.Height;
-
-            // 从输入纹理读取
-            float4 pixel = input[new Int2(x, y)];
-
-            // ========== 重负载 GPU 计算 ==========
-            // 执行大量浮点运算来压榨 GPU 计算单元
-            
-            float r = pixel.X;
-            float g = pixel.Y;
-            float b = pixel.Z;
-            float a = pixel.W;
-
-            // 多层数学运算（约 50 次 FLOPs/像素）
-            for (int i = 0; i < 5; i++)
-            {
-                r = MathF.Sin(r * 3.14159f + time * 0.1f) * MathF.Cos(g * 2.71828f + time * 0.05f);
-                g = MathF.Tan(b * 1.61803f + time * 0.08f) * MathF.Sin(r * 0.5f + time * 0.03f);
-                b = MathF.Sqrt(MathF.Abs(g * 0.7f + time * 0.06f)) * MathF.Cos(r * 1.41421f);
-                a = MathF.Atan2(r * 0.3f + g * 0.5f + time, b * 0.2f + 1.0f);
-                
-                r = MathF.FusedMultiplyAdd(r, 0.5f, 0.5f);
-                g = MathF.FusedMultiplyAdd(g, 0.5f, 0.5f);
-                b = MathF.FusedMultiplyAdd(b, 0.5f, 0.5f);
-                a = MathF.FusedMultiplyAdd(a, 0.5f, 0.5f);
-
-                // 额外计算：傅里叶级数近似
-                float fx = (float)x / width * 6.28318f;
-                float fy = (float)y / height * 6.28318f;
-                float sum = 0;
-                for (int k = 1; k <= 4; k++)
-                {
-                    sum += MathF.Sin(fx * k + time * 0.2f) * MathF.Cos(fy * k + time * 0.15f) / k;
-                    sum += MathF.Cos(fx * k * 0.5f + time * 0.1f) * MathF.Sin(fy * k * 0.7f + time * 0.12f) / k;
-                }
-                
-                r = MathF.Clamp(r + sum * 0.1f, 0, 1);
-                g = MathF.Clamp(g + sum * 0.08f, 0, 1);
-                b = MathF.Clamp(b + sum * 0.12f, 0, 1);
-            }
-
-            // 输出结果
-            output[new Int2(x, y)] = new float4(r, g, b, a);
+            int t = sec / Math.Max(sec / 3, 1);
+            Console.WriteLine($"\n🔥 综合测试，每项 {t} 秒\n");
+            await RunCpu(t, thr); Console.WriteLine(); await Task.Delay(2000);
+            await RunMem(t); Console.WriteLine(); await Task.Delay(2000);
+            await RunGpu(t); Console.WriteLine("\n✅ 全部完成！");
         }
     }
 }
