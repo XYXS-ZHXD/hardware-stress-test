@@ -124,7 +124,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
             Console.WriteLine("   🔧 编译计算着色器...");
             Blob? shaderBlob = null;
             Blob? errorBlob = null;
-            var hr = Compiler.Compile(hlsl, null, null, "CSMain", "cs_5_0", 
+            var hr = Compiler.Compile(hlsl, "CSMain", "cs_5_0"
                 0, out shaderBlob, out errorBlob);
 
             if (hr.Failure || shaderBlob == null)
